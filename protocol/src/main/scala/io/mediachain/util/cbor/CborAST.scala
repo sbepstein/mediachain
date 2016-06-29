@@ -15,6 +15,7 @@ object CborAST {
   case object CNull extends CValue
   case object CUndefined extends CValue
   case class CTag(tag: Long) extends CValue
+  case class CTaggedValue(tag: CTag, value: CValue) extends CValue
   case class CInt(num: BigInt) extends CValue
   case class CDouble(num: Double) extends CValue
   case class CBool(bool: Boolean) extends CValue
@@ -67,10 +68,16 @@ object CborAST {
       withStringKeys(stringFields.toList)
   }
 
+  def itemWithTag(item: Cbor.DataItem, tag: CTag): Cbor.DataItem = {
+    item.setTag(new Cbor.Tag(tag.tag))
+    item
+  }
+
   def toDataItem(cValue: CValue): Cbor.DataItem = cValue match {
     case CNull => Cbor.SimpleValue.NULL
     case CUndefined => Cbor.SimpleValue.UNDEFINED
     case CTag(tag) => new Cbor.Tag(tag)
+    case CTaggedValue(tag, value) => itemWithTag(toDataItem(value), tag)
     case CInt(num) => converter.convert(num)
     case CDouble(num) => converter.convert(num)
     case CBool(bool) => converter.convert(bool)
@@ -93,44 +100,53 @@ object CborAST {
     case CUnhandled(item) => item
   }
 
-  def fromDataItem(item: Cbor.DataItem): CValue = item match {
+  def fromDataItem(item: Cbor.DataItem): CValue = {
+    val cValue = item match {
       // match these first, since they're encoded as Arrays and would
       // otherwise match CArray
-    case _: Cbor.LanguageTaggedString => CUnhandled(item)
-    case _: Cbor.RationalNumber => CUnhandled(item)
+      case _: Cbor.LanguageTaggedString => CUnhandled(item)
+      case _: Cbor.RationalNumber => CUnhandled(item)
 
-    case t: Cbor.Tag => CTag(t.getValue)
+      case t: Cbor.Tag => CTag(t.getValue)
 
-    case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.TRUE =>
-      CBool(true)
-    case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.FALSE =>
-      CBool(false)
-    case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.NULL =>
-      CNull
-    case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.UNDEFINED =>
-      CUndefined
+      case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.TRUE =>
+        CBool(true)
+      case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.FALSE =>
+        CBool(false)
+      case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.NULL =>
+        CNull
+      case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.UNDEFINED =>
+        CUndefined
 
-    case i: Cbor.UnsignedInteger => CInt(i.getValue)
-    case i: Cbor.NegativeInteger => CInt(i.getValue)
-    case f: Cbor.HalfPrecisionFloat => CDouble(f.getValue)
-    case f: Cbor.SinglePrecisionFloat => CDouble(f.getValue)
-    case f: Cbor.DoublePrecisionFloat => CDouble(f.getValue)
-    case n: Cbor.Number => CInt(n.getValue)
+      case i: Cbor.UnsignedInteger => CInt(i.getValue)
+      case i: Cbor.NegativeInteger => CInt(i.getValue)
+      case f: Cbor.HalfPrecisionFloat => CDouble(f.getValue)
+      case f: Cbor.SinglePrecisionFloat => CDouble(f.getValue)
+      case f: Cbor.DoublePrecisionFloat => CDouble(f.getValue)
+      case n: Cbor.Number => CInt(n.getValue)
 
-    case b: Cbor.ByteString => CBytes(b.getBytes)
-    case s: Cbor.UnicodeString => CString(s.getString)
-    case a: Cbor.Array =>
-      CArray(a.getDataItems.asScala.map(fromDataItem).toList)
+      case b: Cbor.ByteString => CBytes(b.getBytes)
+      case s: Cbor.UnicodeString => CString(s.getString)
+      case a: Cbor.Array =>
+        CArray(a.getDataItems.asScala.map(fromDataItem).toList)
 
-    case m: Cbor.Map => {
-      val keys = m.getKeys.asScala
-      val fields = keys.map { k =>
-        (fromDataItem(k), fromDataItem(m.get(k)))
+      case m: Cbor.Map => {
+        val keys = m.getKeys.asScala
+        val fields = keys.map { k =>
+          (fromDataItem(k), fromDataItem(m.get(k)))
+        }
+        CMap(fields.toList)
       }
-      CMap(fields.toList)
+
+      case _ => CUnhandled(item)
     }
 
-    case _ => CUnhandled(item)
+    val itemTag = Option(item.getTag).map(t => CTag(t.getValue))
+    itemTag match {
+      case Some(tag) =>
+        CTaggedValue(tag, cValue)
+      case _ => cValue
+    }
   }
 
 

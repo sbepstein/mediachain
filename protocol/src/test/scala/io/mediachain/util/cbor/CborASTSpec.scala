@@ -15,7 +15,7 @@ object CborASTSpec extends BaseSpec with ScalaCheck {
          - round-trip encodes to/from cbor-java DataItems $roundTripCborJava
       """
 
-  def roundTripCborJava = prop { cVal: CValue =>
+  def roundTripCborJava = prop { cVal: CTaggedValue =>
     val asDataItem = toDataItem(cVal)
     val converted = toDataItem(fromDataItem(asDataItem))
 
@@ -30,5 +30,9 @@ object CborASTSpec extends BaseSpec with ScalaCheck {
     new CborEncoder(out).encode(asDataItem)
     out.close()
     out.toByteArray must_== CborCodec.encode(cVal)
-  }
+
+    // check that tags match
+    asDataItem.getTag must not(beNull)
+    asDataItem.getTag.getValue must_== converted.getTag.getValue
+  }.setArbitrary(arbitraryCTaggedValue)
 }
