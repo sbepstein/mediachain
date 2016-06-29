@@ -83,18 +83,17 @@ object CborSerialization {
 
   /**
     * Try to deserialize a `Reference` from a cbor-encoded byte array
+ *
     * @param bytes the byte array to deserialize from
     * @return the decoded `Reference`, or a `DeserializationError` on failure
     */
   def referenceFromCborBytes(bytes: Array[Byte])
   : Xor[DeserializationError, Reference] = {
-    val refMapXor = CborCodec.decode(bytes) match {
-      case (_: CTag) :: (refMap: CMap) :: _ => Xor.right(refMap)
-      case (refMap: CMap) :: _ => Xor.right(refMap)
-      case _ => Xor.left(CborDecodingFailed())
-    }
+    val refMapXor = Xor.fromOption(
+      CborCodec.decode(bytes).headOption,
+      CborDecodingFailed())
 
-    refMapXor.flatMap(ReferenceDeserializer.fromCMap)
+    refMapXor.flatMap(ReferenceDeserializer.fromCValue)
   }
 
   /**
@@ -313,7 +312,7 @@ object CborSerialization {
 
       CMap.withStringKeys(merged.toList)
     }
-    
+
     def toCMapWithMeta(
       defaults: Map[String, CValue],
       optionals: Map[String, Option[CValue]],
@@ -322,7 +321,7 @@ object CborSerialization {
     : CMap =
       toCMapWithDefaults(defaults + ("meta" -> CMap.withStringKeys(meta.toList)),
                          optionals + ("metaSource" -> metaSource.map(_.toCbor)))
-    
+
   }
 
   /**
@@ -379,7 +378,7 @@ object CborSerialization {
       for {
         _ <- assertRequiredTypeName(cMap, MediachainTypes.Entity)
         meta <- getRequired[CMap](cMap, "meta")
-      } yield Entity(meta.asStringKeyedMap, 
+      } yield Entity(meta.asStringKeyedMap,
                      getOptionalReference(cMap, "metaSource"))
   }
 
@@ -624,25 +623,25 @@ object CborSerialization {
           block = block,
           data = data
         )
-    
+
     def dataFromCbor(records: CArray) = {
       @tailrec def loop(rest: List[CValue], map: Map[Reference, Array[Byte]])
       : Xor[DeserializationError, Map[Reference, Array[Byte]]] = {
         rest match {
-          case CArray(List(refCbor: CMap, data: CBytes)) :: rest =>
-            ReferenceDeserializer.fromCMap(refCbor) match {
+          case CArray(List(refCbor: CValue, data: CBytes)) :: rest =>
+            ReferenceDeserializer.fromCValue(refCbor) match {
               case Xor.Right(ref) =>
                 loop(rest, map + (ref -> data.bytes))
               case err@Xor.Left(_) => err
             }
-            
+
           case hd :: _ =>
             Xor.Left(UnexpectedObjectType(s"Archive data decoding failed; unexpected object: $hd"))
-            
+
           case Nil => Xor.Right(map)
         }
       }
-      
+
       loop(records.items, Map())
     }
   }
@@ -674,15 +673,15 @@ object CborSerialization {
 
   object ReferenceDeserializer extends CborDeserializer[Reference]
   {
-    def fromCMap(cMap: CMap): Xor[DeserializationError, Reference] = {
-      if (cMap.contains("@link")) {
-        MultihashReferenceDeserializer.fromCMap(cMap)
-      } else if (cMap.contains("@dummy")) {
-        DummyReferenceDeserializer.fromCMap(cMap)
-      } else {
-        Xor.Left(ReferenceDecodingFailed("Unknown reference type"))
-      }
+    override def fromCValue(cValue: CValue): Xor[DeserializationError, Reference] = {
+        MultihashReferenceDeserializer.fromCValue(cValue)
+        .recoverWith {
+          case _: RequiredFieldNotFound => DummyReferenceDeserializer.fromCValue(cValue)
+        }
     }
+
+    def fromCMap(cMap: CMap): Xor[DeserializationError, Reference] =
+      fromCValue(cMap)
   }
 
   object MultihashReferenceDeserializer extends CborDeserializer[MultihashReference]
@@ -693,6 +692,22 @@ object CborSerialization {
         multihash <- MultiHash.fromBytes(hashBytes)
           .leftMap(err => ReferenceDecodingFailed(s"Multihash decoding failed: $err"))
       } yield MultihashReference(multihash)
+
+    override def fromCValue(cValue: CValue): Xor[DeserializationError, MultihashReference] = {
+      cValue match {
+        case CTaggedValue(tag, CBytes(value)) if tag == MultihashReference.cborLinkTag =>
+          MultiHash.fromBytes(value)
+            .leftMap(err => ReferenceDecodingFailed(s"Multihash decoding failed: $err"))
+            .map(MultihashReference.apply)
+
+        case cMap: CMap =>
+          fromCMap(cMap)
+
+        case _ => Xor.left(UnexpectedCborType(
+          s"Expected CBOR map, but received ${cValue.getClass.getName}"
+        ))
+      }
+    }
   }
 
   object DummyReferenceDeserializer extends CborDeserializer[DummyReference]
@@ -783,8 +798,8 @@ object CborSerialization {
     */
   def getRequiredReference(cMap: CMap, fieldName: String)
   : Xor[DeserializationError, Reference] =
-    getRequired[CMap](cMap, fieldName)
-    .flatMap(referenceFromCMap)
+    getRequired[CValue](cMap, fieldName)
+    .flatMap(referenceFromCValue)
 
   /**
     * Get an optional `Reference` value from the cbor map
@@ -795,18 +810,18 @@ object CborSerialization {
     *         None otherwise
     */
   def getOptionalReference(cMap: CMap, fieldName: String): Option[Reference] =
-    cMap.getAs[CMap](fieldName)
-      .flatMap(referenceFromCMap(_).toOption)
+    cMap.getAs[CValue](fieldName)
+      .flatMap(referenceFromCValue(_).toOption)
 
 
   /**
     * Try to decode a `Reference` from a cbor map.
     *
-    * @param cMap the cbor `CMap` to decode as a `Reference`
+    * @param cValue the cbor `CMap` to decode as a `Reference`
     * @return the decoded `Reference`, or a `DeserializationError` if decoding
     *         fails
     */
-  def referenceFromCMap(cMap: CMap): Xor[DeserializationError, Reference] =
-    ReferenceDeserializer.fromCMap(cMap)
+  def referenceFromCValue(cValue: CValue): Xor[DeserializationError, Reference] =
+    ReferenceDeserializer.fromCValue(cValue)
 
 }

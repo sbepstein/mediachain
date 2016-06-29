@@ -42,10 +42,12 @@ object Datastore {
     override val mediachainType: Option[MediachainType] = None
 
     override def toCbor: CValue =
-      CMap.withStringKeys("@link" -> CBytes(multihash.bytes))
+      CTaggedValue(MultihashReference.cborLinkTag, CBytes(multihash.bytes))
   }
 
   object MultihashReference {
+    val cborLinkTag = CTag(258)
+
     def forDataObject(dataObject: DataObject): MultihashReference =
       MultihashReference(
         MultiHash.hashWithSHA256(dataObject.toCborBytes)
