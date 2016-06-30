@@ -83,7 +83,6 @@ object CborSerialization {
 
   /**
     * Try to deserialize a `Reference` from a cbor-encoded byte array
- *
     * @param bytes the byte array to deserialize from
     * @return the decoded `Reference`, or a `DeserializationError` on failure
     */
