@@ -42,7 +42,7 @@ object Datastore {
     override val mediachainType: Option[MediachainType] = None
 
     override def toCbor: CValue =
-      CTaggedValue(MultihashReference.cborLinkTag, CBytes(multihash.bytes))
+      CTaggedValue(MultihashReference.cborLinkTag, CString(multihash.base58))
   }
 
   object MultihashReference {

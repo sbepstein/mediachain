@@ -693,8 +693,8 @@ object CborSerialization {
 
     override def fromCValue(cValue: CValue): Xor[DeserializationError, MultihashReference] = {
       cValue match {
-        case CTaggedValue(tag, CBytes(value)) if tag == MultihashReference.cborLinkTag =>
-          MultiHash.fromBytes(value)
+        case CTaggedValue(tag, CString(value)) if tag == MultihashReference.cborLinkTag =>
+          MultiHash.fromBase58(value)
             .leftMap(err => ReferenceDecodingFailed(s"Multihash decoding failed: $err"))
             .map(MultihashReference.apply)
 
