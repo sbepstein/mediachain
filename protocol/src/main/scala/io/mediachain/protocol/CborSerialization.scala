@@ -703,7 +703,8 @@ object CborSerialization {
           fromCMap(cMap)
 
         case _ => Xor.left(UnexpectedCborType(
-          s"Expected CBOR map, but received ${cValue.getClass.getName}"
+          "Expected tagged byte string or CBOR map, but received " +
+            s"${cValue.getClass.getName}"
         ))
       }
     }
