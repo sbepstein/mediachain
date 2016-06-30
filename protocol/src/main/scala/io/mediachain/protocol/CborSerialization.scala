@@ -106,7 +106,6 @@ object CborSerialization {
     (implicit deserializers: DeserializerMap = defaultDeserializers)
   : Xor[DeserializationError, T] =
     CborCodec.decode(bytes) match {
-      case (_: CTag) :: (taggedValue: CValue) :: _ => fromCbor(taggedValue)(deserializers)
       case (cValue: CValue) :: _ => fromCbor(cValue)(deserializers)
       case Nil => Xor.left(CborDecodingFailed())
     }

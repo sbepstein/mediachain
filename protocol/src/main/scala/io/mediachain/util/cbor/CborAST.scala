@@ -14,8 +14,7 @@ object CborAST {
   sealed trait CValue
   case object CNull extends CValue
   case object CUndefined extends CValue
-  case class CTag(tag: Long) extends CValue
-  case class CTaggedValue(tag: CTag, value: CValue) extends CValue
+  case class CTaggedValue(tag: Long, value: CValue) extends CValue
   case class CInt(num: BigInt) extends CValue
   case class CDouble(num: Double) extends CValue
   case class CBool(bool: Boolean) extends CValue
@@ -68,15 +67,14 @@ object CborAST {
       withStringKeys(stringFields.toList)
   }
 
-  def itemWithTag(item: Cbor.DataItem, tag: CTag): Cbor.DataItem = {
-    item.setTag(new Cbor.Tag(tag.tag))
+  def itemWithTag(item: Cbor.DataItem, tag: Long): Cbor.DataItem = {
+    item.setTag(new Cbor.Tag(tag))
     item
   }
 
   def toDataItem(cValue: CValue): Cbor.DataItem = cValue match {
     case CNull => Cbor.SimpleValue.NULL
     case CUndefined => Cbor.SimpleValue.UNDEFINED
-    case CTag(tag) => new Cbor.Tag(tag)
     case CTaggedValue(tag, value) => itemWithTag(toDataItem(value), tag)
     case CInt(num) => converter.convert(num)
     case CDouble(num) => converter.convert(num)
@@ -106,8 +104,6 @@ object CborAST {
       // otherwise match CArray
       case _: Cbor.LanguageTaggedString => CUnhandled(item)
       case _: Cbor.RationalNumber => CUnhandled(item)
-
-      case t: Cbor.Tag => CTag(t.getValue)
 
       case s: Cbor.SimpleValue if s.getSimpleValueType == SimpleValueType.TRUE =>
         CBool(true)
@@ -141,7 +137,7 @@ object CborAST {
       case _ => CUnhandled(item)
     }
 
-    val itemTag = Option(item.getTag).map(t => CTag(t.getValue))
+    val itemTag = Option(item.getTag).map(_.getValue)
     itemTag match {
       case Some(tag) =>
         CTaggedValue(tag, cValue)

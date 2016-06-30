@@ -46,7 +46,7 @@ object Datastore {
   }
 
   object MultihashReference {
-    val cborLinkTag = CTag(258)
+    val cborLinkTag: Long = 258
 
     def forDataObject(dataObject: DataObject): MultihashReference =
       MultihashReference(

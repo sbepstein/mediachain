@@ -11,7 +11,6 @@ object CValueGenerators {
 
   val genCNull = Gen.const(CNull)
   val genCUndefined = Gen.const(CUndefined)
-  val genCTag = Gen.posNum[Long].map(CTag)
   val genCInt = arbitrary[BigInt].map(CInt)
   val genCDouble = arbitrary[Double].map(CDouble)
   val genCBool = arbitrary[Boolean].map(CBool)
@@ -53,7 +52,7 @@ object CValueGenerators {
 
   val genCValue =Gen.oneOf(genCPrimitive, genCArray, genCMap, genCUnhandled)
   val genCTaggedValue = for {
-    tag <- genCTag
+    tag <- Gen.posNum[Long]
     value <- genCValue
   } yield CTaggedValue(tag, value)
 
