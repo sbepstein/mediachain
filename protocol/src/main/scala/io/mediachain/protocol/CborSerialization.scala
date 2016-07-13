@@ -693,10 +693,19 @@ object CborSerialization {
 
     override def fromCValue(cValue: CValue): Xor[DeserializationError, MultihashReference] = {
       cValue match {
-        case CTaggedValue(tag, CString(value)) if tag == MultihashReference.cborLinkTag =>
-          MultiHash.fromBase58(value)
-            .leftMap(err => ReferenceDecodingFailed(s"Multihash decoding failed: $err"))
-            .map(MultihashReference.apply)
+        case CTaggedValue(tag, CBytes(value)) if tag == MultihashReference.cborLinkTag =>
+          val headerLen = MultihashReference.multiaddrHeader.length
+          val header = value.take(headerLen)
+          if (header.sameElements(MultihashReference.multiaddrHeader)) {
+            val hashBytes = value.drop(headerLen)
+            MultiHash.fromBytes(hashBytes)
+              .leftMap(err => ReferenceDecodingFailed(s"Multihash decoding failed: $err"))
+              .map(MultihashReference.apply)
+          } else {
+            val headerStr = header.map("%02x".format(_))
+            Xor.left(ReferenceDecodingFailed(
+              s"Unexpected multiaddr header: 0x$headerStr"))
+          }
 
         case cMap: CMap =>
           fromCMap(cMap)

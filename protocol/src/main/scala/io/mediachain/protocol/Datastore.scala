@@ -42,11 +42,21 @@ object Datastore {
     override val mediachainType: Option[MediachainType] = None
 
     override def toCbor: CValue =
-      CTaggedValue(MultihashReference.cborLinkTag, CString(multihash.base58))
+      CTaggedValue(MultihashReference.cborLinkTag,
+        CBytes(MultihashReference.multiaddrHeader ++ multihash.bytes))
   }
 
   object MultihashReference {
+    // IPLD uses cbor tags to indicate a traversable link
+    // if the tagged value is a byte array, it will be interpreted
+    // as a multiaddr (see https://github.com/jbenet/multiaddr)
     val cborLinkTag: Long = 258
+
+    // prefix multihash bytes with a multiaddr header
+    // the header value is 0xA50322 which is the ipfs multiaddr code 0xA503
+    // (421, encoded as a protobuf-style varint)
+    // + the length of a sha2-256 multihash 0x22 (34 bytes)
+    val multiaddrHeader: Array[Byte] = Array[Byte](-91, 3, 34)
 
     def forDataObject(dataObject: DataObject): MultihashReference =
       MultihashReference(
