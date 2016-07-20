@@ -1,11 +1,13 @@
 package io.mediachain.copycat
 
-import java.util.concurrent.{Executors, BlockingQueue, LinkedBlockingQueue}
+import java.net.{InetAddress, InetSocketAddress, SocketAddress}
+import java.util.concurrent.{BlockingQueue, Executors, LinkedBlockingQueue}
 
 import cats.data.Xor
 import com.amazonaws.AmazonClientException
+import io.grpc.ServerCall.Listener
 import io.grpc.stub.StreamObserver
-import io.grpc.{ServerBuilder, Status, StatusRuntimeException}
+import io.grpc._
 import io.mediachain.copycat.Client.{ClientState, ClientStateListener}
 import io.mediachain.util.Metrics
 import io.mediachain.multihash.MultiHash
@@ -17,10 +19,11 @@ import io.mediachain.protocol.transactor.Transactor._
 import io.mediachain.protocol.types.Types
 import io.mediachain.protocol.types.Types.{ChainReference, NullReference}
 import org.slf4j.LoggerFactory
+
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 import scala.collection.mutable.{ArrayBuffer, Buffer}
-import scala.util.{Try, Success, Failure}
+import scala.util.{Failure, Success, Try}
 
 class TransactorListenerState {
   var index: BigInt = -1
@@ -227,9 +230,10 @@ extends ClientStateListener with JournalListener {
       : List[JournalBlock]
       = {
         val block = getBlock(ref)
+        logger.info(s"Fetched block ${ref} -> ${block.index} ${block.chain}")
         if (block.chain == state.blockchain) {
           block :: blocks
-        } else if (block.chain.isEmpty) {
+        } else if (block.chain.isEmpty || block.index < state.index) {
           throw new RuntimeException("PANIC: Blockchain divergence detected")
         } else {
           loop(block.chain.get, block :: blocks)
@@ -271,11 +275,14 @@ extends ClientStateListener with JournalListener {
     val block = Await.result(client.currentBlock, Duration.Inf)
     if (state.isEmpty) {
       setCurrentBlock(block)
+    } else if (block.index < state.index) {
+      logger.warn(s"Cluster replayed STALE BLOCK ${block.index}; current index is ${state.index}")
     } else if (block.chain == state.blockchain) {
       extendCurrentBlock(block)
     } else if (block.chain.isEmpty) {
       throw new RuntimeException("PANIC: Blockchain divergence detected")
     } else {
+      logger.info(s"Resyncing blockchain ${state.index} ${state.blockchain} -> ${block.index} ${block.chain}")
       val xblocks = fetchBlocks(block.chain)
       extendCurrentBlock(xblocks.head)
       xblocks.tail.foreach(setCurrentBlock(_))
@@ -340,6 +347,19 @@ class TransactorService(client: Client, datastore: Datastore, metrics: Option[Me
   private def rpcErrorMetrics(rpc: String, what: String) {
     metrics.foreach { m =>
       m.counter("transactor_error", Map("rpc" -> rpc, "error" -> what))
+    }
+  }
+
+  private def rpcRecordMetrics(entry: JournalEntry) {
+    metrics.foreach { m =>
+      val ctags = entry match {
+        case e: CanonicalEntry => 
+          Map("metric" -> "record", "record" -> "canonical")
+        case e: ChainEntry =>
+          Map("metric" -> "record", "record" -> "chain")
+      }
+      m.counter("transactor_object", ctags)
+      m.gauge("transactor_object", Map("metric" -> "index"), entry.index.toLong)
     }
   }
 
@@ -413,6 +433,7 @@ class TransactorService(client: Client, datastore: Datastore, metrics: Option[Me
             )
           )
         case Xor.Right(entry) =>
+          rpcRecordMetrics(entry)
           TransactorService.refToRPCMultihashRef(entry.ref)
       }
     }
@@ -450,6 +471,7 @@ class TransactorService(client: Client, datastore: Datastore, metrics: Option[Me
             )
           )
         case Xor.Right(entry) =>
+          rpcRecordMetrics(entry)
           TransactorService.refToRPCMultihashRef(entry.chain)
       }
     }
@@ -473,6 +495,8 @@ class TransactorService(client: Client, datastore: Datastore, metrics: Option[Me
 }
 
 object TransactorService {
+  val uniqueClientAddresses = new collection.mutable.HashSet[InetAddress]
+
   def refToRPCMultihashRef(ref: Reference)
   : Types.MultihashReference = ref match {
     case MultihashReference(multihash) =>
@@ -510,6 +534,31 @@ object TransactorService {
     JournalEvent(event)
   }
 
+  def loggingInterceptor: ServerInterceptor = {
+    new ServerInterceptor {
+      val logger = LoggerFactory.getLogger("UniqueClientIP")
+
+      override def interceptCall[ReqT, RespT](
+        call: ServerCall[ReqT, RespT],
+        headers: Metadata,
+        next: ServerCallHandler[ReqT, RespT]): Listener[ReqT] = {
+
+        call.attributes().get(ServerCall.REMOTE_ADDR_KEY) match {
+          case inet: InetSocketAddress =>
+            val address = inet.getAddress
+            if (!uniqueClientAddresses.contains(address)) {
+              logger.info(address.toString)
+              uniqueClientAddresses.add(address)
+            }
+          case nonInet =>
+            // should only be hit during in-process transport (unit tests, etc)
+            logger.debug(s"Connection from non-inet socket: $nonInet")
+        }
+
+        next.startCall(call, headers)
+      }
+    }
+  }
 
   def createServer(service: TransactorService, port: Int)
                   (implicit executionContext: ExecutionContext)
@@ -518,7 +567,10 @@ object TransactorService {
     
     val builder = ServerBuilder.forPort(port)
     val server = builder.addService(
-      TransactorServiceGrpc.bindService(service, executionContext)
+      ServerInterceptors.intercept(
+        TransactorServiceGrpc.bindService(service, executionContext),
+        loggingInterceptor
+      )
     ).build
     server
   }
