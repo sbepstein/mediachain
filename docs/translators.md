@@ -110,9 +110,9 @@ mediachain/translation/getty
 ### Translator lifecycle
 We're experimenting with using IPFS to version and distribute translators. In order to make one available to the system:
 
-* `git clone https://github.com/mediachain/schema-translators.git`
+* `git clone https://github.com/mediachain/schema-translators.git` 
 * add your translator (following "sub-package structure above") and the respective sample file(s)
-* install the updated files into an active venv
+* install the updated files into an active venv (you may also need to `pip install cython` manually first)
 ```bash
 $ virtualenv venv
 $ source venv/bin/activate
